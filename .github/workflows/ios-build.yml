@@ -1,0 +1,46 @@
+name: Build FunTube for free sideloading
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: funtube-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Expand mobile source
+        run: unzip -q FunTube-iPhone-Source.zip -d source
+      - name: Check filtering logic
+        working-directory: source
+        run: node --test tests/filter.test.cjs
+      - name: Build iPhone IPA without Apple credentials
+        working-directory: source
+        run: bash scripts/build-ios.sh
+      - name: Test filtering in iPhone simulator WebKit
+        working-directory: source
+        run: |
+          DEVICE=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for k,vs in d["devices"].items() if "iOS" in k for v in vs if v["name"].startswith("iPhone")))')
+          xcodebuild -project FunTube.xcodeproj -scheme FunTube -configuration Debug -sdk iphonesimulator -destination "id=$DEVICE" -derivedDataPath build/simulator -resultBundlePath build/WebKit-tests.xcresult CODE_SIGNING_ALLOWED=NO test
+      - name: Save iPhone installation files
+        uses: actions/upload-artifact@v4
+        with:
+          name: FunTube-iPhone
+          path: |
+            source/build/FunTube-unsigned.ipa
+            source/build/SHA256.txt
+            source/windows/
+          retention-days: 7
+      - name: Save diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FunTube-build-diagnostics
+          path: source/build/WebKit-tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 3
